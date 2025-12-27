@@ -1,91 +1,55 @@
 local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 
 local Settings = require(script.Parent:WaitForChild("Settings"))
-local Utils = require(script.Parent:WaitForChild("Utils"))
 local Guard = require(script.Parent:WaitForChild("Guard"))
+local Utils = require(script.Parent:WaitForChild("Utils"))
 
 local Runtime = {}
 
-local REMOTES_FOLDER_NAME = "Remotes"
-local REQUEST_TOKEN_NAME = "FrameworkPlus_RequestToken"
-
-local runningSystems: {[string]: any} = {}
-
-local function getFrameworkRoot(): Instance
-	return script.Parent
-end
-
 local function getSystemsFolder(): Folder
-	local root = getFrameworkRoot()
-	local f = root:FindFirstChild("Systems")
-	assert(f and f:IsA("Folder"), "[FrameworkPlus] Missing Folder: Systems")
+	local f = script.Parent:FindFirstChild("Systems")
+	assert(f and f:IsA("Folder"), Settings.PrintPrefix .. "Missing FrameworkPlus.Systems folder")
 	return f
 end
 
-local function getRemotesFolderServer(): Folder
-	local root = getFrameworkRoot()
-	local remotes = root:FindFirstChild(REMOTES_FOLDER_NAME)
-	if remotes and remotes:IsA("Folder") then
-		return remotes
+local function getRemotesFolder(): Folder
+	local name = Settings.RemotesFolderName
+	local f = script.Parent:FindFirstChild(name)
+	if f and f:IsA("Folder") then
+		return f
 	end
-	remotes = Instance.new("Folder")
-	remotes.Name = REMOTES_FOLDER_NAME
-	remotes.Parent = root
-	return remotes
+	f = Instance.new("Folder")
+	f.Name = name
+	f.Parent = script.Parent
+	return f
 end
 
-local function getRemotesFolderClient(): Folder?
-	local root = getFrameworkRoot()
-	local remotes = root:FindFirstChild(REMOTES_FOLDER_NAME)
-	if remotes and remotes:IsA("Folder") then
-		return remotes
-	end
-	return nil
-end
-
-local function ensureRemoteFunctionServer(): RemoteFunction
-	local remotes = getRemotesFolderServer()
-	local rf = remotes:FindFirstChild(REQUEST_TOKEN_NAME)
+local function ensureRequestTokenRemote(): RemoteFunction
+	local remotes = getRemotesFolder()
+	local n = Settings.RequestTokenRemoteName
+	local rf = remotes:FindFirstChild(n)
 	if rf and rf:IsA("RemoteFunction") then
 		return rf
 	end
 	rf = Instance.new("RemoteFunction")
-	rf.Name = REQUEST_TOKEN_NAME
+	rf.Name = n
 	rf.Parent = remotes
 	return rf
 end
 
-local function getRemoteFunctionClient(): RemoteFunction?
-	local remotes = getRemotesFolderClient()
-	if not remotes then return nil end
-	local rf = remotes:FindFirstChild(REQUEST_TOKEN_NAME)
-	if rf and rf:IsA("RemoteFunction") then
-		return rf
-	end
-	return nil
-end
-
-local function resolveSystem(systemName: string): (ModuleScript?, table | string)
-	local systems = getSystemsFolder()
-	local sys = systems:FindFirstChild(systemName)
-	if not sys or not sys:IsA("Folder") then
-		return nil, ("System '%s' not found (expected Folder)"):format(systemName)
-	end
-
-	local initMod = sys:FindFirstChild("init")
-	if not initMod or not initMod:IsA("ModuleScript") then
-		return nil, ("System '%s' missing ModuleScript 'init'"):format(systemName)
+local function resolveSystem(systemName: string): (ModuleScript?, any)
+	local sys = getSystemsFolder():FindFirstChild(systemName)
+	if not sys or not sys:IsA("ModuleScript") then
+		return nil, ("System '%s' not found"):format(systemName)
 	end
 
 	local cfgMod = sys:FindFirstChild("Config")
 	if not cfgMod or not cfgMod:IsA("ModuleScript") then
-		return nil, ("System '%s' missing ModuleScript 'Config'"):format(systemName)
+		return nil, ("System '%s' missing Config.lua"):format(systemName)
 	end
 
-	local ok, cfg = Utils.safeRequire(cfgMod)
+	local ok, cfg = pcall(require, cfgMod)
 	if not ok then
 		return nil, ("System '%s' Config require failed: %s"):format(systemName, tostring(cfg))
 	end
@@ -93,159 +57,161 @@ local function resolveSystem(systemName: string): (ModuleScript?, table | string
 		return nil, ("System '%s' Config must return a table"):format(systemName)
 	end
 
-	return initMod, cfg
+	return sys, cfg
 end
 
 local function mintToken(systemName: string): string
 	return ("FP|%s|%s"):format(systemName, HttpService:GenerateGUID(false))
 end
 
-function Runtime.ServerStart(): boolean
-	assert(RunService:IsServer(), "[FrameworkPlus] Runtime.ServerStart must run on server")
+local runningSystems: {[string]: boolean} = {}
 
-	local rf = ensureRemoteFunctionServer()
+function Runtime.IsSystemRunning(systemName: string): boolean
+	return runningSystems[systemName] == true
+end
 
-	rf.OnServerInvoke = function(plr: Player, systemName: any, callerFullName: any)
+function Runtime.ServerStart(): (boolean, string?)
+	local okS, errS = Guard.serverOnly()
+	if not okS then return false, errS end
+
+	local rf = ensureRequestTokenRemote()
+
+	rf.OnServerInvoke = function(_plr, systemName: any, callerTemplate: any)
 		if type(systemName) ~= "string" or systemName == "" then
 			return false, "Invalid systemName"
 		end
-		if Settings.RequireHandshake and (type(callerFullName) ~= "string" or callerFullName == "") then
-			return false, "Handshake required but callerFullName missing"
+		if type(callerTemplate) ~= "string" or callerTemplate == "" then
+			return false, "Invalid callerTemplate"
 		end
 
-		local initMod, cfgOrErr = resolveSystem(systemName)
-		if not initMod then
+		local allowOk, allowErr = Guard.isAllowedCallerTemplate(callerTemplate)
+		if not allowOk then
+			return false, allowErr
+		end
+
+		local sys, cfgOrErr = resolveSystem(systemName)
+		if not sys then
 			return false, cfgOrErr
 		end
-		local cfg = cfgOrErr :: table
 
+		local cfg = cfgOrErr
 		if cfg.RunContext ~= "Client" then
-			return false, ("System '%s' RunContext must be 'Client'"):format(systemName)
+			return false, ("System '%s' must be Client"):format(systemName)
 		end
 
 		if Settings.RequireHandshake then
-			local callerTemplate = Utils.runtimeToTemplatePath(callerFullName)
-			local expected = tostring(cfg.HandshakePath)
-			if callerTemplate ~= expected then
-				return false, ("Handshake blocked. Expected '%s' got '%s'"):format(expected, callerTemplate)
+			local expected = cfg.HandshakePath
+			if expected ~= callerTemplate then
+				return false, ("Handshake blocked. Expected '%s' got '%s'"):format(tostring(expected), tostring(callerTemplate))
 			end
 		end
 
 		return true, mintToken(systemName)
 	end
 
-	Utils.log("ServerStart OK", nil, true)
-	return true
+	print(Settings.PrintPrefix .. "ServerStart OK")
+	return true, nil
 end
 
+function Runtime.ClientStartSystem(callerScript: Instance, systemName: string, opts: any?): (boolean, string?)
+	local okC, errC = Guard.clientOnly()
+	if not okC then return false, errC end
 
-function Runtime.GetCallerPathTemplate(callerScript: Instance): string
-	return Utils.runtimeToTemplatePath(callerScript:GetFullName())
-end
+	local okCaller, errCaller = Guard.requireCallerScript(callerScript)
+	if not okCaller then return false, errCaller end
 
-function Runtime.ClientStartSystem(systemName: string, payload: any?): (boolean, string?)
-	assert(RunService:IsClient(), "[FrameworkPlus] Runtime.ClientStartSystem must run on client")
-
-	payload = payload or {}
-	local player: Player = payload.Player or Players.LocalPlayer
-	local camera: Camera = payload.Camera or workspace.CurrentCamera
-
-	local callerFullName: string? = nil
-	if Settings.RequireHandshake then
-		local callerScript: Instance? = payload.CallerScript
-		if callerScript == nil then
-			return false, "Settings.RequireHandshake=true, so you must pass { CallerScript = script }"
-		end
-		callerFullName = callerScript:GetFullName()
+	if type(systemName) ~= "string" or systemName == "" then
+		return false, Settings.PrintPrefix .. "Invalid systemName"
 	end
 
 	if runningSystems[systemName] then
-		return true
+		return true, nil
 	end
 
-	local initMod, cfgOrErr = resolveSystem(systemName)
-	if not initMod then
+	local sys, cfgOrErr = resolveSystem(systemName)
+	if not sys then
 		return false, cfgOrErr
 	end
-	local cfg = cfgOrErr :: table
 
-	local okLocal, errLocal = Guard.clientPrecheck(cfg)
-	if not okLocal then
-		return false, errLocal
+	local cfg = cfgOrErr
+	if cfg.RunContext ~= "Client" then
+		return false, ("System '%s' is not Client"):format(systemName)
 	end
 
-	local rf = getRemoteFunctionClient()
-	if not rf then
-		return false, "RemoteFunction missing. Did the server call FrameworkPlus.ServerStart()?"
-	end
+	local rf = ensureRequestTokenRemote()
 
-	local attempts = 0
-	local success: boolean = false
-	local tokenOrErr: any = nil
+	local callerTemplate = Utils.templateCallerPathFromScript(callerScript)
 
-	while attempts < Settings.TokenMaxAttempts do
-		attempts += 1
-		local okInvoke, s, t = pcall(function()
-			return rf:InvokeServer(systemName, callerFullName)
+	local attempts = Settings.TokenMaxAttempts
+	local delay = Settings.TokenRetryDelay
+
+	local success = false
+	local tokenOrErr = ""
+
+	for _ = 1, attempts do
+		local okInvoke, a, b = pcall(function()
+			return rf:InvokeServer(systemName, callerTemplate)
 		end)
 
-		if okInvoke and s == true and type(t) == "string" then
-			success = true
-			tokenOrErr = t
-			break
+		if okInvoke then
+			success = a
+			tokenOrErr = b
+			if success then
+				break
+			end
+		else
+			tokenOrErr = tostring(a)
 		end
 
-		-- keep last error
-		if okInvoke and s == false then
-			tokenOrErr = t
-		elseif not okInvoke then
-			tokenOrErr = s
-		end
-
-		task.wait(Settings.TokenRetryDelay)
+		task.wait(delay)
 	end
 
 	if not success then
 		return false, tostring(tokenOrErr)
 	end
 
-	local token: string = tokenOrErr
+	local token = tokenOrErr
 
-	local okReq, sysModuleOrErr = Utils.safeRequire(initMod)
-	if not okReq then
-		return false, ("System '%s' init require failed: %s"):format(systemName, tostring(sysModuleOrErr))
-	end
-	local sysModule = sysModuleOrErr
-
-	if type(sysModule) ~= "table" or type(sysModule.Start) ~= "function" then
-		return false, ("System '%s' init must return table with Start(player,camera,token)"):format(systemName)
+	local systemTable = require(sys)
+	if type(systemTable) ~= "table" or type(systemTable.Start) ~= "function" then
+		return false, ("System '%s' missing Start()"):format(systemName)
 	end
 
-	local okStart, startRes = pcall(function()
-		return sysModule.Start(player, camera, token)
+	local player = (opts and opts.Player) or game:GetService("Players").LocalPlayer
+	local camera = (opts and opts.Camera) or workspace.CurrentCamera
+
+	local startedOk, startedRes = pcall(function()
+		return systemTable.Start(player, camera, token)
 	end)
 
-	if not okStart then
-		return false, ("System '%s' Start error: %s"):format(systemName, tostring(startRes))
+	if not startedOk then
+		return false, ("System '%s' Start error: %s"):format(systemName, tostring(startedRes))
 	end
-	if startRes == false then
+
+	if startedRes == false then
 		return false, ("System '%s' Start returned false"):format(systemName)
 	end
 
-	runningSystems[systemName] = sysModule
-	Utils.log(("Loaded (%d/%d): %s"):format(1, 1, systemName), cfg, false)
-
-	return true
+	runningSystems[systemName] = true
+	return true, nil
 end
 
-function Runtime.ClientStopSystem(systemName: string): boolean
-	local sys = runningSystems[systemName]
-	if not sys then return true end
-	if type(sys.Stop) == "function" then
-		pcall(sys.Stop)
+function Runtime.ClientStopSystem(systemName: string): (boolean, string?)
+	local okC, errC = Guard.clientOnly()
+	if not okC then return false, errC end
+
+	local sys, cfgOrErr = resolveSystem(systemName)
+	if not sys then
+		return false, cfgOrErr
 	end
+
+	local systemTable = require(sys)
+	if type(systemTable) == "table" and type(systemTable.Stop) == "function" then
+		pcall(systemTable.Stop)
+	end
+
 	runningSystems[systemName] = nil
-	return true
+	return true, nil
 end
 
 return Runtime

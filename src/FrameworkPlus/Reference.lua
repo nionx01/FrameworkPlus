@@ -1,22 +1,27 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Settings = require(script.Parent:WaitForChild("Settings"))
 
 local Reference = {}
+Reference.objectName = "FrameworkPlusReference"
 
-function Reference.addToReplicatedStorage()
-	local existing = ReplicatedStorage:FindFirstChild(Settings.ReferenceObjectName)
+function Reference.add()
+	local existing = ReplicatedStorage:FindFirstChild(Reference.objectName)
 	if existing then
 		return false
 	end
 
 	local ov = Instance.new("ObjectValue")
-	ov.Name = Settings.ReferenceObjectName
+	ov.Name = Reference.objectName
 	ov.Value = script.Parent
 	ov.Parent = ReplicatedStorage
-	return ov
+	return true
 end
 
-function Reference.getObject()
-	return ReplicatedStorage:FindFirstChild(Settings.ReferenceObjectName)
+function Reference.get(): ObjectValue?
+	local ov = ReplicatedStorage:FindFirstChild(Reference.objectName)
+	if ov and ov:IsA("ObjectValue") then
+		return ov
+	end
+	return nil
 end
+
 return Reference

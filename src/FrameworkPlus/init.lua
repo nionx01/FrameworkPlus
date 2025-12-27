@@ -1,30 +1,25 @@
-local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
 local Runtime = require(script:WaitForChild("Runtime"))
 
 local FrameworkPlus = {}
 
--- Expose version/info if you want
-FrameworkPlus.VERSION = require(script:WaitForChild("VERSION"))
-
--- Server boot (creates/owns remotes inside FrameworkPlus.Remotes)
-function FrameworkPlus.ServerStart()
+-- SERVER: call once on server boot
+function FrameworkPlus.ServerStart(): (boolean, string?)
 	return Runtime.ServerStart()
 end
 
--- Client start system (auto-handshake path; no manual CallerPath needed)
-function FrameworkPlus.ClientStartSystem(systemName: string, payload: table?)
-	return Runtime.ClientStartSystem(systemName, payload)
+-- CLIENT: easiest usage:
+-- FrameworkPlus.ClientStartSystem(script, "ExampleSystem")
+-- FrameworkPlus.ClientStartSystem(script, "ExampleSystem", { Player = ..., Camera = ... })
+function FrameworkPlus.ClientStartSystem(callerScript: Instance, systemName: string, opts: any?): (boolean, string?)
+	return Runtime.ClientStartSystem(callerScript, systemName, opts)
 end
 
--- Convenience: return Systems folder
-function FrameworkPlus.GetSystemsFolder()
-	return script:WaitForChild("Systems")
+function FrameworkPlus.ClientStopSystem(systemName: string): (boolean, string?)
+	return Runtime.ClientStopSystem(systemName)
 end
 
--- Convenience: return Remotes folder
-function FrameworkPlus.GetRemotesFolder()
-	return script:WaitForChild("Remotes")
+function FrameworkPlus.IsSystemRunning(systemName: string): boolean
+	return Runtime.IsSystemRunning(systemName)
 end
+
 return FrameworkPlus

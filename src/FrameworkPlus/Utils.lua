@@ -1,24 +1,18 @@
 local Utils = {}
 
-function Utils.safeRequire(mod: ModuleScript): (boolean, any)
-	return pcall(require, mod)
+function Utils.clampAnglePi(a: number): number
+	return (a + math.pi) % (2 * math.pi) - math.pi
 end
 
-function Utils.runtimeToTemplatePath(full: string): string
+function Utils.templateCallerPathFromScript(callerScript: Instance): string
+	local full = callerScript:GetFullName()
 	full = full:gsub("^Players%.[^%.]+%.PlayerScripts%.", "StarterPlayer.StarterPlayerScripts.")
-	full = full:gsub("^Workspace%.[^%.]+%.", "StarterPlayer.StarterPlayerScripts.")
+	full = full:gsub("^Players%.[^%.]+%.StarterPlayerScripts%.", "StarterPlayer.StarterPlayerScripts.")
 	return full
 end
 
-function Utils.log(msg: string, cfg: table?, serverTag: boolean?)
-	local prefix = "[FrameworkPlus] "
-	if cfg and type(cfg.PrintPrefix) == "string" and cfg.PrintPrefix ~= "" then
-		prefix = cfg.PrintPrefix
-	end
-	if serverTag then
-		print(prefix .. msg)
-	else
-		print(prefix .. msg)
-	end
+function Utils.startsWith(s: string, prefix: string): boolean
+	return s:sub(1, #prefix) == prefix
 end
+
 return Utils

@@ -1,24 +1,23 @@
-local Config = require(script.Parent:WaitForChild("Config"))
-local Guard = require(script.Parent.Parent.Parent:WaitForChild("Guard"))
-
+--!strict
 local System = {}
 local running = false
 
-function System.Start(player, camera, token)
-	if running then return true end
-	if not Guard.validToken(token) then
-		warn((Config.PrintPrefix or "[ExampleSystem] ") .. "Blocked: must start via FrameworkPlus token.")
-		return false
-	end
+local function validToken(token: any): boolean
+	return type(token) == "string" and token:sub(1, 3) == "FP|"
+end
 
+function System.Start(_player: Player?, _camera: Camera?, token: any)
+	if running then return true end
+	if not validToken(token) then return false end
 	running = true
-	print((Config.PrintPrefix or "[ExampleSystem] ") .. "Started.")
+	print("[ExampleSystem] STARTED")
 	return true
 end
 
 function System.Stop()
 	if not running then return end
 	running = false
-	print((Config.PrintPrefix or "[ExampleSystem] ") .. "Stopped.")
+	print("[ExampleSystem] STOPPED")
 end
+
 return System
