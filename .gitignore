@@ -1,0 +1,9 @@
+# Wally packages (generated)
+Packages/
+# Rojo / editor junk
+*.rbxl
+*.rbxlx
+*.lock~ 
+.DS_Store
+# VSCode
+.vscode/

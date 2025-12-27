@@ -1,0 +1,11 @@
+{
+  "name": "FrameworkPlusDev",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "FrameworkPlus": {
+        "$path": "src/FrameworkPlus"
+      }
+    }
+  }
+}
