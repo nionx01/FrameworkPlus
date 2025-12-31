@@ -1,4 +1,3 @@
---!strict
 local System = {}
 local running = false
 
